@@ -7,8 +7,6 @@ use Drupal\Core\StreamWrapper\LocalStream;
 use Drupal\Core\StreamWrapper\StreamWrapperInterface;
 use Drupal\Core\Url;
 use Drupal\encrypt\EncryptionProfileInterface;
-use Drupal\file_encrypt\StreamFilter\DecryptStreamFilter;
-use Drupal\file_encrypt\StreamFilter\EncryptStreamFilter;
 
 /**
  * Provides a scheme wrapper which encrypts / decrypts automatically.
@@ -190,50 +188,36 @@ class EncryptStreamWrapper extends LocalStream {
    * {@inheritdoc}
    */
   public function stream_open($uri, $mode, $options, &$opened_path) {
-    $this->ensureEncryptedFilesDirectory();
-    parent::stream_open($uri, $mode, $options, $opened_path);
-    $this->appendAllStreamFilters($uri);
-    return (bool) $this->handle;
-  }
-
-  /**
-   * Creates the encrypted files directory if it doesn't exist.
-   */
-  protected function ensureEncryptedFilesDirectory() {
-    $directory = $this->getDirectoryPath();
-    if ($directory && !file_exists($directory)) {
-      mkdir($directory, 0755);
+    // Create Encrypted Files directory if it doesn't exist.
+    $fe_directory = $this->getDirectoryPath();
+    if ($fe_directory && !file_exists($fe_directory)) {
+      mkdir($fe_directory, 0755);
     }
-  }
 
-  /**
-   * Appends all the stream filters.
-   *
-   * @param string $uri
-   *   A string containing the URI to the file to open.
-   */
-  protected function appendAllStreamFilters($uri) {
-    $params = ['encryption_profile' => $this->extractEncryptionProfile($uri)];
-    $this->appendStreamFilter('encrypt', EncryptStreamFilter::class, STREAM_FILTER_WRITE, $params);
-    $this->appendStreamFilter('decrypt', DecryptStreamFilter::class, STREAM_FILTER_READ, $params);
-  }
+    $encryption_profile = $this->extractEncryptionProfile($uri);
 
-  /**
-   * Appends a single stream filter.
-   *
-   * @param string $filter_name
-   *   The filter name.
-   * @param string $class_name
-   *   The filter class name.
-   * @param int $read_write
-   *   The filter chain to attach to: STREAM_FILTER_READ, STREAM_FILTER_WRITE,
-   *   or STREAM_FILTER_ALL.
-   * @param array $params
-   *   An arbitrary array of parameters to pass to the filter.
-   */
-  protected function appendStreamFilter($filter_name, $class_name, $read_write, array $params) {
-    stream_filter_register($filter_name, $class_name);
-    stream_filter_append($this->handle, $filter_name, $read_write, $params);
+    // Load resource location.
+    $this->uri = $uri;
+    $path = $this->getLocalPath();
+    // Save the mode for later reference.
+    $this->mode = $mode;
+    // Load temp file as our handle.
+    $this->handle = fopen('php://memory', 'w+b');
+    // If file exists, decrypt and load it into memory.
+    if (file_exists($path)) {
+      $raw_file = file_get_contents($path);
+      $decrypted_file = $this->decrypt($raw_file, $encryption_profile);
+      $this->setFileInfo($decrypted_file, $uri);
+      // Write to memory.
+      fwrite($this->handle, $decrypted_file);
+      rewind($this->handle);
+    }
+    // Set $opened_path.
+    if ((bool) $this->handle && $options & STREAM_USE_PATH) {
+      $opened_path = $path;
+    }
+
+    return (bool) $this->handle;
   }
 
   /**
@@ -254,6 +238,30 @@ class EncryptStreamWrapper extends LocalStream {
 
     // Remove erroneous leading or trailing, forward-slashes and backslashes.
     return trim($target, '\/');
+  }
+
+  /**
+   * Encrypts and writes the open file to disk, then closes the stream.
+   */
+  public function stream_close() {
+    // If file mode we opened with is only for reading,
+    // don't resave the file.
+    if ((strpos($this->mode, 'r') !== FALSE) &&
+      (strpos($this->mode, '+') === FALSE)) {
+      fclose($this->handle);
+      return;
+    }
+
+    $encryption_profile = $this->extractEncryptionProfile($this->uri);
+
+    // Encrypt file and save.
+    rewind($this->handle);
+    $file_contents = stream_get_contents($this->handle);
+    file_put_contents($this->getLocalPath(), $this->encrypt($file_contents, $encryption_profile));
+    // Store important file info.
+    $this->setFileInfo($file_contents, $this->uri);
+    // Close handle and reset manual key.
+    fclose($this->handle);
   }
 
   /**
