@@ -2,10 +2,25 @@
 
 namespace Drupal\file_encrypt\StreamFilter;
 
+use Drupal\encrypt\EncryptionProfileInterface;
+use Drupal\encrypt\EncryptServiceInterface;
+
 /**
  * Provides a base class for stream filters.
  */
 abstract class StreamFilterBase extends \php_user_filter {
+
+  /**
+   * The byte length reserved for the data header.
+   *
+   * @see maxPayloadLength()
+   */
+  const HEADER_LENGTH = 7;
+
+  /**
+   * The character to use to pad the data header.
+   */
+  const HEADER_PADDING_CHARACTER = "\0";
 
   /**
    * The encryption service.
@@ -25,31 +40,25 @@ abstract class StreamFilterBase extends \php_user_filter {
    * {@inheritdoc}
    */
   public function onCreate() {
-    $this->encryption = \Drupal::service('encryption');
+    $required_params = [
+      'encryption_service' => EncryptServiceInterface::class,
+      'encryption_profile' => EncryptionProfileInterface::class,
+    ];
+    foreach ($required_params as $name => $type) {
+      assert(isset($this->params[$name]) && $this->params[$name] instanceof $type, sprintf("Missing or invalid '%s' parameter.", $name, $type));
+    }
+    $this->encryption = $this->params['encryption_service'];
     $this->encryptionProfile = $this->params['encryption_profile'];
   }
 
   /**
-   * {@inheritdoc}
+   * Returns the data payload maximum length in bytes.
+   *
+   * @return int
+   *   The maximum data payload length in bytes.
    */
-  public function filter($in, $out, &$consumed, $closing) {
-    while ($bucket = stream_bucket_make_writeable($in)) {
-      $bucket->data = $this->filterData($bucket->data);
-      $consumed += $bucket->datalen;
-      stream_bucket_append($out, $bucket);
-    }
-    return PSFS_PASS_ON;
+  public static function maxPayloadLength() {
+    return (int) str_repeat(9, self::HEADER_LENGTH);
   }
-
-  /**
-   * Filters data.
-   *
-   * @param string $data
-   *   The data to filter.
-   *
-   * @return string
-   *   The filtered data.
-   */
-  abstract protected function filterData($data);
 
 }

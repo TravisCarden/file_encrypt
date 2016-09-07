@@ -26,9 +26,12 @@ class EncryptBinaryFileResponse extends BinaryFileResponse  {
    * https://github.com/symfony/symfony/issues/19738.
    */
   protected function fixContentLengthHeader() {
-    $file = fopen($this->getFile()->getPathname(), 'rb');
-    $this->headers->set('Content-Length', fstat($file)['size']);
-    fclose($file);
+    // The only way to get the size of the filtered data is to actually read it.
+    ob_start();
+    $size = readfile($this->getFile()->getPathname());
+    ob_end_clean();
+
+    $this->headers->set('Content-Length', $size);
   }
 
 }

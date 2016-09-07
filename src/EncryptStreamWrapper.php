@@ -213,14 +213,21 @@ class EncryptStreamWrapper extends LocalStream {
    *   A string containing the URI to the file to open.
    */
   protected function appendAllStreamFilters($uri) {
-    $params = ['encryption_profile' => $this->extractEncryptionProfile($uri)];
-    $this->appendStreamFilter('encrypt', EncryptStreamFilter::class, STREAM_FILTER_WRITE, $params);
-    $this->appendStreamFilter('decrypt', DecryptStreamFilter::class, STREAM_FILTER_READ, $params);
+    /** @var \Drupal\encrypt\EncryptService $encryption */
+    $encryption = \Drupal::service('encryption');
+    $params = [
+      'encryption_service' => $encryption,
+      'encryption_profile' => $this->extractEncryptionProfile($uri),
+    ];
+    self::appendStreamFilter($this->handle, EncryptStreamFilter::NAME, EncryptStreamFilter::class, STREAM_FILTER_WRITE, $params);
+    self::appendStreamFilter($this->handle, DecryptStreamFilter::NAME, DecryptStreamFilter::class, STREAM_FILTER_READ, $params);
   }
 
   /**
    * Appends a single stream filter.
    *
+   * @param resource $stream
+   *   The stream to append the filter to.
    * @param string $filter_name
    *   The filter name.
    * @param string $class_name
@@ -230,10 +237,12 @@ class EncryptStreamWrapper extends LocalStream {
    *   or STREAM_FILTER_ALL.
    * @param array $params
    *   An arbitrary array of parameters to pass to the filter.
+   *
+   * @internal
    */
-  protected function appendStreamFilter($filter_name, $class_name, $read_write, array $params) {
+  public static function appendStreamFilter($stream, $filter_name, $class_name, $read_write, array $params) {
     stream_filter_register($filter_name, $class_name);
-    stream_filter_append($this->handle, $filter_name, $read_write, $params);
+    stream_filter_append($stream, $filter_name, $read_write, $params);
   }
 
   /**
